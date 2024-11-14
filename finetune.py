@@ -64,6 +64,18 @@ def inference(test_loader, model, device, result_path):
             f.write(f"{pred}\n")
     print(f"Predictions saved to {result_path}")
 
+class VPTDeepFinetune(nn.Module):
+    def __init__(self, vit_backbone, num_layers=12, prompt_len=10, hidden_dim=768):
+        super(VPTDeepFinetune, self).__init__()
+        self.vit_backbone = vit_backbone
+        # Initialize learnable prompts
+        v = (6 / (hidden_dim + prompt_len)) ** 0.5
+        self.prompts = nn.Parameter(
+            torch.zeros(1, num_layers, prompt_len, hidden_dim).uniform_(-v, v)
+        )
+    def forward(self, x):
+        return self.vit_backbone(x, prompts=self.prompts)
+
 class Trainer():
     def __init__(self, model, train_loader, val_loader, writer,
                  optimizer, lr, wd, momentum, 
@@ -136,4 +148,4 @@ class Trainer():
                 torch.save(self.model.state_dict(), model_file_name)
             self.lr_schedule.step()
         
-        return best_val_acc, best_epoch
+        return best_val_acc, best_epoch        
