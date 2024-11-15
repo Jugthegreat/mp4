@@ -4,6 +4,7 @@ import torch
 from vision_transformer import vit_b_32, ViT_B_32_Weights
 from tqdm import tqdm
 import numpy as np
+from vision_transformer import vit_b_32, ViT_B_32_Weights
 
 def get_encoder(name):
     if name == 'vit_b_32':
