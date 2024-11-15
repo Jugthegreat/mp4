@@ -1,4 +1,3 @@
-# Code from PyTorch
 import math
 from collections import OrderedDict
 from functools import partial
@@ -8,7 +7,7 @@ import torch
 import torch.nn as nn
 
 from torchvision.ops.misc import Conv2dNormActivation, MLP
-from torchvision.models import ViT_B_32_Weights, Weights, WeightsEnum
+from torchvision.models import ViT_B_32_Weights, WeightsEnum
 from torchvision.utils import _log_api_usage_once
 
 
@@ -75,6 +74,7 @@ class MLPBlock(MLP):
             error_msgs,
         )
 
+
 class EncoderBlock(nn.Module):
     """Transformer encoder block."""
 
@@ -112,27 +112,53 @@ class EncoderBlock(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, seq_length, num_layers, num_heads, hidden_dim, mlp_dim, dropout, attention_dropout, norm_layer=partial(nn.LayerNorm, eps=1e-6)):
+    """Transformer Model Encoder for sequence to sequence translation."""
+
+    def __init__(
+        self,
+        seq_length: int,
+        num_layers: int,
+        num_heads: int,
+        hidden_dim: int,
+        mlp_dim: int,
+        dropout: float,
+        attention_dropout: float,
+        norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
+    ):
         super().__init__()
-        self.pos_embedding = nn.Parameter(torch.empty(1, seq_length, hidden_dim).normal_(std=0.02))
+        # Note that batch_size is on the first dim because
+        # we have batch_first=True in nn.MultiAttention() by default
+        self.pos_embedding = nn.Parameter(torch.empty(1, seq_length, hidden_dim).normal_(std=0.02))  # from BERT
         self.dropout = nn.Dropout(dropout)
-        
-        # Use a list of layers with numeric indexing to match the pre-trained model's expected format
-        self.layers = nn.ModuleList([
-            EncoderBlock(num_heads, hidden_dim, mlp_dim, dropout, attention_dropout, norm_layer)
-            for _ in range(num_layers)
-        ])
+        layers: OrderedDict[str, nn.Module] = OrderedDict()
+        for i in range(num_layers):
+            layers[f"encoder_layer_{i}"] = EncoderBlock(
+                num_heads,
+                hidden_dim,
+                mlp_dim,
+                dropout,
+                attention_dropout,
+                norm_layer,
+            )
+        self.layers = nn.ModuleList(layers.values())
         self.ln = norm_layer(hidden_dim)
 
-    def forward(self, input: torch.Tensor, prompts: torch.Tensor):
-        # Add positional embedding to the input
-        input = input + self.pos_embedding
-        for i, layer in enumerate(self.layers):
-            # Select the prompt for the ith layer and concatenate it with the input
-            prompt = prompts[:, i]
-            input = layer(torch.cat([prompt, input], dim=1))  # Pass through each layer with prompts
-        return self.ln(input)
+    def forward(self, input: torch.Tensor, prompts=None):
+        torch._assert(input.dim() == 3, f"Expected (batch_size, seq_length, hidden_dim) got {input.shape}")
 
+        batch_size = input.size(0)
+        seq_length = input.size(1)
+        x = input + self.pos_embedding[:, :seq_length, :]
+
+        x = self.dropout(x)
+        for i, layer in enumerate(self.layers):
+            if prompts is not None:
+                # prompts shape: (batch_size, num_layers, prompt_len, hidden_dim)
+                prompt = prompts[:, i]  # Shape: (batch_size, prompt_len, hidden_dim)
+                x = torch.cat([prompt, x], dim=1)  # Concatenate along sequence length dimension
+            x = layer(x)
+        x = self.ln(x)
+        return x
 
 
 class VisionTransformer(nn.Module):
@@ -226,7 +252,7 @@ class VisionTransformer(nn.Module):
             nn.init.trunc_normal_(self.conv_proj.weight, std=math.sqrt(1 / fan_in))
             if self.conv_proj.bias is not None:
                 nn.init.zeros_(self.conv_proj.bias)
-        elif self.conv_proj.conv_last is not None and isinstance(self.conv_proj.conv_last, nn.Conv2d):
+        elif hasattr(self.conv_proj, 'conv_last') and isinstance(self.conv_proj.conv_last, nn.Conv2d):
             # Init the last 1x1 conv of the conv stem
             nn.init.normal_(
                 self.conv_proj.conv_last.weight, mean=0.0, std=math.sqrt(2.0 / self.conv_proj.conv_last.out_channels)
@@ -264,7 +290,7 @@ class VisionTransformer(nn.Module):
 
         return x
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, prompts=None):
         # Reshape and permute the input tensor
         x = self._process_input(x)
         n = x.shape[0]
@@ -273,7 +299,7 @@ class VisionTransformer(nn.Module):
         batch_class_token = self.class_token.expand(n, -1, -1)
         x = torch.cat([batch_class_token, x], dim=1)
 
-        x = self.encoder(x)
+        x = self.encoder(x, prompts)
 
         # Classifier "token" as used by standard language architectures
         x = x[:, 0]
