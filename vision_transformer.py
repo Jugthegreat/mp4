@@ -29,19 +29,34 @@ class ConvStemConfig(NamedTuple):
     activation_layer: Callable[..., nn.Module] = nn.ReLU
 
 
-class MLPBlock(MLP):
+class MLPBlock(nn.Module):
     """Transformer MLP block."""
 
     _version = 2
 
     def __init__(self, in_dim: int, mlp_dim: int, dropout: float):
-        super().__init__(in_dim, [mlp_dim, in_dim], activation_layer=nn.GELU, inplace=None, dropout=dropout)
+        super().__init__()
 
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                if m.bias is not None:
-                    nn.init.normal_(m.bias, std=1e-6)
+        # Use the same layer names as in the pre-trained weights
+        self.linear_1 = nn.Linear(in_dim, mlp_dim)
+        self.activation = nn.GELU()
+        self.dropout = nn.Dropout(dropout)
+        self.linear_2 = nn.Linear(mlp_dim, in_dim)
+        self.dropout2 = nn.Dropout(dropout)
+
+        # Initialize weights
+        nn.init.xavier_uniform_(self.linear_1.weight)
+        nn.init.normal_(self.linear_1.bias, std=1e-6)
+        nn.init.xavier_uniform_(self.linear_2.weight)
+        nn.init.normal_(self.linear_2.bias, std=1e-6)
+
+    def forward(self, x):
+        x = self.linear_1(x)
+        x = self.activation(x)
+        x = self.dropout(x)
+        x = self.linear_2(x)
+        x = self.dropout2(x)
+        return x
 
     def _load_from_state_dict(
         self,
@@ -56,13 +71,8 @@ class MLPBlock(MLP):
         version = local_metadata.get("version", None)
 
         if version is None or version < 2:
-            # Replacing legacy MLPBlock with MLP. See https://github.com/pytorch/vision/pull/6053
-            for i in range(2):
-                for type in ["weight", "bias"]:
-                    old_key = f"{prefix}linear_{i+1}.{type}"
-                    new_key = f"{prefix}{3*i}.{type}"
-                    if old_key in state_dict:
-                        state_dict[new_key] = state_dict.pop(old_key)
+            # Adjust for older versions if necessary
+            pass
 
         super()._load_from_state_dict(
             state_dict,
@@ -73,7 +83,6 @@ class MLPBlock(MLP):
             unexpected_keys,
             error_msgs,
         )
-
 
 class EncoderBlock(nn.Module):
     """Transformer encoder block."""
@@ -127,20 +136,21 @@ class Encoder(nn.Module):
     ):
         super().__init__()
         # Note that batch_size is on the first dim because
-        # we have batch_first=True in nn.MultiAttention() by default
+        # we have batch_first=True in nn.MultiheadAttention() by default
         self.pos_embedding = nn.Parameter(torch.empty(1, seq_length, hidden_dim).normal_(std=0.02))  # from BERT
         self.dropout = nn.Dropout(dropout)
-        layers: OrderedDict[str, nn.Module] = OrderedDict()
-        for i in range(num_layers):
-            layers[f"encoder_layer_{i}"] = EncoderBlock(
+
+        # Use a list to store layers to maintain numerical indices
+        self.layers = nn.ModuleList([
+            EncoderBlock(
                 num_heads,
                 hidden_dim,
                 mlp_dim,
                 dropout,
                 attention_dropout,
                 norm_layer,
-            )
-        self.layers = nn.ModuleList(layers.values())
+            ) for _ in range(num_layers)
+        ])
         self.ln = norm_layer(hidden_dim)
 
     def forward(self, input: torch.Tensor, prompts=None):
