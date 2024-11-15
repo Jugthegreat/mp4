@@ -1,3 +1,4 @@
+# Code adapted from PyTorch Vision Transformer implementation
 import math
 from collections import OrderedDict
 from functools import partial
@@ -9,7 +10,6 @@ import torch.nn as nn
 from torchvision.ops.misc import Conv2dNormActivation, MLP
 from torchvision.models import ViT_B_32_Weights, WeightsEnum
 from torchvision.utils import _log_api_usage_once
-
 
 V = TypeVar("V")
 
@@ -56,8 +56,13 @@ class MLPBlock(MLP):
         version = local_metadata.get("version", None)
 
         if version is None or version < 2:
-            # Adjust for older versions if necessary
-            pass
+            # Replacing legacy MLPBlock with MLP.
+            for i in range(2):
+                for type in ["weight", "bias"]:
+                    old_key = f"{prefix}linear_{i+1}.{type}"
+                    new_key = f"{prefix}{3*i}.{type}"
+                    if old_key in state_dict:
+                        state_dict[new_key] = state_dict.pop(old_key)
 
         super()._load_from_state_dict(
             state_dict,
@@ -80,14 +85,16 @@ class EncoderBlock(nn.Module):
         mlp_dim: int,
         dropout: float,
         attention_dropout: float,
-        norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
+        norm_layer: Callable[..., nn.Module] = partial(nn.LayerNorm, eps=1e-6),
     ):
         super().__init__()
         self.num_heads = num_heads
 
         # Attention block
         self.ln_1 = norm_layer(hidden_dim)
-        self.self_attention = nn.MultiheadAttention(hidden_dim, num_heads, dropout=attention_dropout, batch_first=True)
+        self.self_attention = nn.MultiheadAttention(
+            hidden_dim, num_heads, dropout=attention_dropout, batch_first=True
+        )
         self.dropout = nn.Dropout(dropout)
 
         # MLP block
@@ -95,7 +102,7 @@ class EncoderBlock(nn.Module):
         self.mlp = MLPBlock(hidden_dim, mlp_dim, dropout)
 
     def forward(self, input: torch.Tensor):
-        torch._assert(input.dim() == 3, f"Expected (batch_size, seq_length, hidden_dim) got {input.shape}")
+        torch._assert(input.dim() == 3, f"Expected (batch_size, seq_length, hidden_dim), got {input.shape}")
         x = self.ln_1(input)
         x, _ = self.self_attention(x, x, x, need_weights=False)
         x = self.dropout(x)
@@ -118,14 +125,18 @@ class Encoder(nn.Module):
         mlp_dim: int,
         dropout: float,
         attention_dropout: float,
-        norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
+        norm_layer: Callable[..., nn.Module] = partial(nn.LayerNorm, eps=1e-6),
     ):
         super().__init__()
-        # Note that batch_size is on the first dim because
-        # we have batch_first=True in nn.MultiheadAttention() by default
-        self.pos_embedding = nn.Parameter(torch.empty(1, seq_length, hidden_dim).normal_(std=0.02))  # from BERT
+        self.num_layers = num_layers
+        self.hidden_dim = hidden_dim
+
+        # Positional embedding
+        self.pos_embedding = nn.Parameter(torch.empty(1, seq_length, hidden_dim).normal_(std=0.02))
         self.dropout = nn.Dropout(dropout)
-        layers = OrderedDict()
+
+        # Transformer layers
+        layers: OrderedDict[str, nn.Module] = OrderedDict()
         for i in range(num_layers):
             layers[f"encoder_layer_{i}"] = EncoderBlock(
                 num_heads,
@@ -138,26 +149,29 @@ class Encoder(nn.Module):
         self.layers = nn.Sequential(layers)
         self.ln = norm_layer(hidden_dim)
 
-    def forward(self, input: torch.Tensor, prompts=None):
-        torch._assert(input.dim() == 3, f"Expected (batch_size, seq_length, hidden_dim) got {input.shape}")
+    def forward(self, input: torch.Tensor, deep_prompts: Optional[torch.Tensor] = None):
+        torch._assert(input.dim() == 3, f"Expected (batch_size, seq_length, hidden_dim), got {input.shape}")
+        x = input + self.pos_embedding  # Shape: (batch_size, seq_len, hidden_dim)
 
-        batch_size = input.size(0)
-        seq_length = input.size(1)
-        x = input + self.pos_embedding[:, :seq_length, :]
+        batch_size = x.size(0)
+        if deep_prompts is not None:
+            # deep_prompts shape: (1, num_layers, prompt_len, hidden_dim)
+            deep_prompts = deep_prompts.expand(batch_size, -1, -1, -1)  # Expand to match batch size
 
-        x = self.dropout(x)
-        for i, (name, layer) in enumerate(self.layers.named_children()):
-            if prompts is not None:
-                # prompts shape: (batch_size, num_layers, prompt_len, hidden_dim)
-                prompt = prompts[:, i]  # Shape: (batch_size, prompt_len, hidden_dim)
-                x = torch.cat([prompt, x], dim=1)  # Concatenate along sequence length dimension
+        for layer_idx, layer in enumerate(self.layers):
+            if deep_prompts is not None:
+                # Get prompts for the current layer
+                layer_prompts = deep_prompts[:, layer_idx, :, :]  # Shape: (batch_size, prompt_len, hidden_dim)
+                # Concatenate prompts to the sequence
+                x = torch.cat([x, layer_prompts], dim=1)  # New sequence length: seq_len + prompt_len
+            x = self.dropout(x)
             x = layer(x)
         x = self.ln(x)
         return x
 
 
 class VisionTransformer(nn.Module):
-    """Vision Transformer as per https://arxiv.org/abs/2010.11929."""
+    """Vision Transformer model."""
 
     def __init__(
         self,
@@ -171,7 +185,7 @@ class VisionTransformer(nn.Module):
         attention_dropout: float = 0.0,
         num_classes: int = 1000,
         representation_size: Optional[int] = None,
-        norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
+        norm_layer: Callable[..., nn.Module] = partial(nn.LayerNorm, eps=1e-6),
         conv_stem_configs: Optional[List[ConvStemConfig]] = None,
     ):
         super().__init__()
@@ -188,7 +202,7 @@ class VisionTransformer(nn.Module):
         self.norm_layer = norm_layer
 
         if conv_stem_configs is not None:
-            # As per https://arxiv.org/abs/2106.14881
+            # Convolutional stem (not used in ViT-B/32)
             seq_proj = nn.Sequential()
             prev_channels = 3
             for i, conv_stem_layer_config in enumerate(conv_stem_configs):
@@ -209,16 +223,18 @@ class VisionTransformer(nn.Module):
             )
             self.conv_proj: nn.Module = seq_proj
         else:
+            # Standard ViT patch embedding
             self.conv_proj = nn.Conv2d(
                 in_channels=3, out_channels=hidden_dim, kernel_size=patch_size, stride=patch_size
             )
 
         seq_length = (image_size // patch_size) ** 2
 
-        # Add a class token
+        # Class token
         self.class_token = nn.Parameter(torch.zeros(1, 1, hidden_dim))
-        seq_length += 1
+        seq_length += 1  # For class token
 
+        # Transformer encoder
         self.encoder = Encoder(
             seq_length,
             num_layers,
@@ -231,6 +247,7 @@ class VisionTransformer(nn.Module):
         )
         self.seq_length = seq_length
 
+        # Classification head
         heads_layers: OrderedDict[str, nn.Module] = OrderedDict()
         if representation_size is None:
             heads_layers["head"] = nn.Linear(hidden_dim, num_classes)
@@ -241,20 +258,25 @@ class VisionTransformer(nn.Module):
 
         self.heads = nn.Sequential(heads_layers)
 
+        # Initialize weights
+        self._init_weights()
+
+    def _init_weights(self):
         if isinstance(self.conv_proj, nn.Conv2d):
-            # Init the patchify stem
+            # Initialize patch embedding
             fan_in = self.conv_proj.in_channels * self.conv_proj.kernel_size[0] * self.conv_proj.kernel_size[1]
             nn.init.trunc_normal_(self.conv_proj.weight, std=math.sqrt(1 / fan_in))
             if self.conv_proj.bias is not None:
                 nn.init.zeros_(self.conv_proj.bias)
         elif hasattr(self.conv_proj, 'conv_last') and isinstance(self.conv_proj.conv_last, nn.Conv2d):
-            # Init the last 1x1 conv of the conv stem
+            # Initialize last conv layer if using conv stem
             nn.init.normal_(
                 self.conv_proj.conv_last.weight, mean=0.0, std=math.sqrt(2.0 / self.conv_proj.conv_last.out_channels)
             )
             if self.conv_proj.conv_last.bias is not None:
                 nn.init.zeros_(self.conv_proj.conv_last.bias)
 
+        # Initialize classification head
         if hasattr(self.heads, "pre_logits") and isinstance(self.heads.pre_logits, nn.Linear):
             fan_in = self.heads.pre_logits.in_features
             nn.init.trunc_normal_(self.heads.pre_logits.weight, std=math.sqrt(1 / fan_in))
@@ -267,38 +289,32 @@ class VisionTransformer(nn.Module):
     def _process_input(self, x: torch.Tensor) -> torch.Tensor:
         n, c, h, w = x.shape
         p = self.patch_size
-        torch._assert(h == self.image_size, f"Wrong image height! Expected {self.image_size} but got {h}!")
-        torch._assert(w == self.image_size, f"Wrong image width! Expected {self.image_size} but got {w}!")
+        torch._assert(h == self.image_size, f"Expected image height {self.image_size}, got {h}")
+        torch._assert(w == self.image_size, f"Expected image width {self.image_size}, got {w}")
         n_h = h // p
         n_w = w // p
 
-        # (n, c, h, w) -> (n, hidden_dim, n_h, n_w)
-        x = self.conv_proj(x)
-        # (n, hidden_dim, n_h, n_w) -> (n, hidden_dim, (n_h * n_w))
-        x = x.reshape(n, self.hidden_dim, n_h * n_w)
-
-        # (n, hidden_dim, (n_h * n_w)) -> (n, (n_h * n_w), hidden_dim)
-        # The self attention layer expects inputs in the format (N, S, E)
-        # where S is the source sequence length, N is the batch size, E is the
-        # embedding dimension
-        x = x.permute(0, 2, 1)
+        # Patch embedding
+        x = self.conv_proj(x)  # Shape: (n, hidden_dim, n_h, n_w)
+        x = x.reshape(n, self.hidden_dim, n_h * n_w)  # Flatten spatial dimensions
+        x = x.permute(0, 2, 1)  # Shape: (n, seq_len, hidden_dim)
 
         return x
 
-    def forward(self, x: torch.Tensor, prompts=None):
-        # Reshape and permute the input tensor
+    def forward(self, x: torch.Tensor, deep_prompts: Optional[torch.Tensor] = None):
+        # Process input and add class token
         x = self._process_input(x)
         n = x.shape[0]
 
-        # Expand the class token to the full batch
+        # Expand class token
         batch_class_token = self.class_token.expand(n, -1, -1)
-        x = torch.cat([batch_class_token, x], dim=1)
+        x = torch.cat([batch_class_token, x], dim=1)  # Shape: (n, seq_len, hidden_dim)
 
-        x = self.encoder(x, prompts)
+        # Pass through Transformer encoder
+        x = self.encoder(x, deep_prompts)
 
-        # Classifier "token" as used by standard language architectures
-        x = x[:, 0]
-
+        # Classification head
+        x = x[:, 0]  # Extract class token
         x = self.heads(x)
 
         return x
@@ -336,23 +352,19 @@ def _vision_transformer(
     return model
 
 
-def vit_b_32(*, weights: Optional[ViT_B_32_Weights] = None, progress: bool = True, **kwargs: Any) -> VisionTransformer:
+def vit_b_32(
+    *,
+    weights: Optional[ViT_B_32_Weights] = ViT_B_32_Weights.IMAGENET1K_V1,
+    progress: bool = True,
+    **kwargs: Any
+) -> VisionTransformer:
     """
-    Constructs a vit_b_32 architecture from
-    `An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale <https://arxiv.org/abs/2010.11929>`_.
+    Constructs a ViT-B/32 model.
 
     Args:
-        weights (:class:`~torchvision.models.ViT_B_32_Weights`, optional): The pretrained
-            weights to use. See :class:`~torchvision.models.ViT_B_32_Weights`
-            below for more details and possible values. By default, no pre-trained weights are used.
-        progress (bool, optional): If True, displays a progress bar of the download to stderr. Default is True.
-        **kwargs: parameters passed to the ``torchvision.models.vision_transformer.VisionTransformer``
-            base class. Please refer to the `source code
-            <https://github.com/pytorch/vision/blob/main/torchvision/models/vision_transformer.py>`_
-            for more details about this class.
-
-    .. autoclass:: torchvision.models.ViT_B_32_Weights
-        :members:
+        weights (ViT_B_32_Weights, optional): Pretrained weights to use.
+        progress (bool, optional): Display progress bar during download.
+        **kwargs: Additional arguments for VisionTransformer.
     """
     weights = ViT_B_32_Weights.verify(weights)
 
