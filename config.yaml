@@ -1,4 +1,4 @@
-vit_linear:
+vit_prompt:
     lr: 0.01                 # Suggested learning rate
     wd: 0.01                 # Suggested weight decay
     epochs: 100              # Total training epochs
