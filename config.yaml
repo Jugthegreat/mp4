@@ -1,13 +1,10 @@
-vit_linear:
-    lr: 0.01             # Learning rate set to 0.01 as per the suggested value
-    wd: 0.01             # Weight decay remains at 0.01
-    epochs: 100          # Training for 100 epochs
-    optimizer: 'sgd'     # SGD optimizer as specified
-    scheduler: 'multi_step'  # Multi-step learning rate scheduler
-    momentum: 0.9        # Momentum can be set to 0.9 for stability (as the default)
-    net_class: ViTLinear # Model class remains ViTLinear
-    batch_size: 32       # Batch size remains at 32
-
-    # Additional scheduler parameters
-    scheduler_milestones: [60, 80]   # Learning rate drops at epochs 60 and 80
-    scheduler_gamma: 0.1             # Factor to drop learning rate by at each milestone
+vit_prompt:
+    lr: 0.01                 # Suggested learning rate
+    wd: 0.01                 # Suggested weight decay
+    epochs: 100              # Total training epochs
+    optimizer: 'sgd'         # Optimizer choice
+    scheduler: 'multi_step'  # Scheduler for learning rate decay
+    momentum: 0.9            # Momentum for SGD
+    net_class: VITPrompt     # Class to use for VPT implementation
+    batch_size: 32           # Batch size for training
+    decay_epochs: [60, 80]   # Epochs at which to drop the learning rate
