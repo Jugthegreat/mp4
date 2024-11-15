@@ -2,7 +2,7 @@ import torch
 from absl import app, flags
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
-from finetune import ViTPrompt, inference, Trainer
+from finetune import ViTLinear, VITPrompt, inference, Trainer
 import yaml
 
 from datasets import get_flower102
@@ -20,7 +20,8 @@ def get_config(exp_name, encoder):
 
     # Add/modify hyperparameters of your class in config.yaml
     encoder_registry = {
-        'ViTPrompt': ViTPrompt,
+        'ViTLinear': ViTLinear,
+        'ViTPrompt': VITPrompt,
     }
     with open("config.yaml", "r") as f:
         config = yaml.safe_load(f)[exp_name]
@@ -47,9 +48,9 @@ def main(_):
         (scheduler, epochs), batch_size = \
         get_config(FLAGS.exp_name, FLAGS.encoder)
 
-    train_data = get_flower102(FLAGS.data_dir,'train')
-    val_data = get_flower102(FLAGS.data_dir,'val')
-    test_data = get_flower102(FLAGS.data_dir,'test')
+    train_data = get_flower102(FLAGS.data_dir, 'train')
+    val_data = get_flower102(FLAGS.data_dir, 'val')
+    test_data = get_flower102(FLAGS.data_dir, 'test')
 
     train_dataloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
     val_dataloader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
@@ -61,7 +62,7 @@ def main(_):
 
     writer = SummaryWriter(f'{dir_name}/lr{lr:0.6f}_wd{wd:0.6f}', flush_secs=10)
 
-    # Initialize your model from the ViTPrompt class.
+    # Initialize the model from the net_class
     model = net_class(102, FLAGS.encoder)
     model.to(device)
 
