@@ -49,4 +49,4 @@ mkdir -p ${OUTPUT_DIR}
 LOG_FILE="${OUTPUT_DIR}/log.txt"
 
 
-python demo_flower.py --exp_name vit_linear --output_dir ${OUTPUT_DIR} --encoder vit_b_32 --data_dir /projects/illinois/class/cs444/saurabhg/fa2024/mp4/flower-dataset-reduced 2>&1 | tee ${LOG_FILE}
+python demo_flower.py --exp_name vit_prompt --output_dir ${OUTPUT_DIR} --encoder vit_b_32 --data_dir /projects/illinois/class/cs444/saurabhg/fa2024/mp4/flower-dataset-reduced 2>&1 | tee ${LOG_FILE}
