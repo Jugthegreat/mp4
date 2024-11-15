@@ -117,7 +117,7 @@ class Encoder(nn.Module):
         self.pos_embedding = nn.Parameter(torch.empty(1, seq_length, hidden_dim).normal_(std=0.02))
         self.dropout = nn.Dropout(dropout)
         
-        # Define layers without custom names, just as a standard sequential list of layers
+        # Use a list of layers with numeric indexing to match the pre-trained model's expected format
         self.layers = nn.ModuleList([
             EncoderBlock(num_heads, hidden_dim, mlp_dim, dropout, attention_dropout, norm_layer)
             for _ in range(num_layers)
@@ -125,11 +125,14 @@ class Encoder(nn.Module):
         self.ln = norm_layer(hidden_dim)
 
     def forward(self, input: torch.Tensor, prompts: torch.Tensor):
+        # Add positional embedding to the input
         input = input + self.pos_embedding
         for i, layer in enumerate(self.layers):
-            prompt = prompts[:, i]  # Select the prompt for the ith layer
-            input = layer(torch.cat([prompt, input], dim=1))  # Concatenate prompt with input
+            # Select the prompt for the ith layer and concatenate it with the input
+            prompt = prompts[:, i]
+            input = layer(torch.cat([prompt, input], dim=1))  # Pass through each layer with prompts
         return self.ln(input)
+
 
 
 class VisionTransformer(nn.Module):
