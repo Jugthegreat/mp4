@@ -1,6 +1,17 @@
+vit_linear:
+    lr: 0.001                # Learning rate for vit_linear
+    wd: 0.01                 # Weight decay
+    epochs: 100              # Total training epochs
+    optimizer: 'sgd'         # Optimizer choice
+    scheduler: 'multi_step'  # Scheduler for learning rate decay
+    momentum: 0.99           # Momentum for SGD
+    net_class: ViTLinear     # Class to use for standard linear fine-tuning
+    batch_size: 32           # Batch size for training
+    decay_epochs: [60, 80]   # Epochs at which to drop the learning rate
+
 vit_prompt:
-    lr: 0.01                 # Suggested learning rate
-    wd: 0.01                 # Suggested weight decay
+    lr: 0.01                 # Suggested learning rate for VPT
+    wd: 0.01                 # Weight decay
     epochs: 100              # Total training epochs
     optimizer: 'sgd'         # Optimizer choice
     scheduler: 'multi_step'  # Scheduler for learning rate decay
