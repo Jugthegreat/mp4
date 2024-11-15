@@ -4,13 +4,39 @@ import torch
 from vision_transformer import vit_b_32, ViT_B_32_Weights
 from tqdm import tqdm
 import numpy as np
-from vision_transformer import vit_b_32, ViT_B_32_Weights
 
 def get_encoder(name):
     if name == 'vit_b_32':
         torch.hub.set_dir("model")
         model = vit_b_32(weights=ViT_B_32_Weights.IMAGENET1K_V1)
     return model
+import torch
+import torch.nn as nn
+from vision_transformer import vit_b_32
+
+class VITPrompt(nn.Module):
+    def __init__(self, n_classes, prompt_len=10, hidden_dim=768, num_layers=12):
+        super(VITPrompt, self).__init__()
+        self.vit = vit_b_32(weights=ViT_B_32_Weights.IMAGENET1K_V1)
+        
+        # Freeze ViT backbone
+        for param in self.vit.parameters():
+            param.requires_grad = False
+        
+        # Create learnable prompts for each layer
+        self.prompts = nn.Parameter(
+            torch.zeros(1, num_layers, prompt_len, hidden_dim).uniform_(-v, v)
+        )
+        
+        # Linear layer for classification
+        self.head = nn.Linear(hidden_dim, n_classes)
+
+    def forward(self, x):
+        for i, layer in enumerate(self.vit.encoder.layers):
+            x = torch.cat([self.prompts[:, i], x], dim=1)
+            x = layer(x)
+        x = x[:, 0]  # Extract the [CLS] token
+        return self.head(x)
 
 class ViTLinear(nn.Module):
     def __init__(self, n_classes, encoder_name):
@@ -64,18 +90,6 @@ def inference(test_loader, model, device, result_path):
         for pred in predictions:
             f.write(f"{pred}\n")
     print(f"Predictions saved to {result_path}")
-
-class VPTDeepFinetune(nn.Module):
-    def __init__(self, vit_backbone, num_layers=12, prompt_len=10, hidden_dim=768):
-        super(VPTDeepFinetune, self).__init__()
-        self.vit_backbone = vit_backbone
-        # Initialize learnable prompts
-        v = (6 / (hidden_dim + prompt_len)) ** 0.5
-        self.prompts = nn.Parameter(
-            torch.zeros(1, num_layers, prompt_len, hidden_dim).uniform_(-v, v)
-        )
-    def forward(self, x):
-        return self.vit_backbone(x, prompts=self.prompts)
 
 class Trainer():
     def __init__(self, model, train_loader, val_loader, writer,
