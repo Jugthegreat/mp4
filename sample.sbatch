@@ -37,16 +37,11 @@ source /projects/illinois/class/cs444/saurabhg/fa2024/mp3/venv/bin/activate
 nvidia-smi
 export PYTHONUNBUFFERED=1
 
-# This creates output directory for every run. Change OUTPUT_DIR while
-# performing each run and ablation experiment
-
-# Assign a default value of runs/run1 to 'OUTPUT_DIR' only if not set on
-# command line already. For each different experiment you run, you should use a
-# different OUTPUT_DIR. Change it in the command line flag.
-OUTPUT_DIR=${OUTPUT_DIR:="runs/run1"}
+# Set OUTPUT_DIR for the VPT-Deep experiment
+OUTPUT_DIR=${OUTPUT_DIR:="runs/vit_prompt"}
 mkdir -p ${OUTPUT_DIR}
 
 LOG_FILE="${OUTPUT_DIR}/log.txt"
 
-
+# Run the VPT-Deep experiment
 python demo_flower.py --exp_name vit_prompt --output_dir ${OUTPUT_DIR} --encoder vit_b_32 --data_dir /projects/illinois/class/cs444/saurabhg/fa2024/mp4/flower-dataset-reduced 2>&1 | tee ${LOG_FILE}
