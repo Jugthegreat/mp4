@@ -117,8 +117,8 @@ class Encoder(nn.Module):
         self.pos_embedding = nn.Parameter(torch.empty(1, seq_length, hidden_dim).normal_(std=0.02))
         self.dropout = nn.Dropout(dropout)
         
-        # Use a sequential block without layer-specific names
-        self.layers = nn.Sequential(*[
+        # Define layers without custom names, just as a standard sequential list of layers
+        self.layers = nn.ModuleList([
             EncoderBlock(num_heads, hidden_dim, mlp_dim, dropout, attention_dropout, norm_layer)
             for _ in range(num_layers)
         ])
@@ -130,7 +130,6 @@ class Encoder(nn.Module):
             prompt = prompts[:, i]  # Select the prompt for the ith layer
             input = layer(torch.cat([prompt, input], dim=1))  # Concatenate prompt with input
         return self.ln(input)
-
 
 
 class VisionTransformer(nn.Module):
