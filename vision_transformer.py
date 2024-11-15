@@ -29,34 +29,19 @@ class ConvStemConfig(NamedTuple):
     activation_layer: Callable[..., nn.Module] = nn.ReLU
 
 
-class MLPBlock(nn.Module):
+class MLPBlock(MLP):
     """Transformer MLP block."""
 
     _version = 2
 
     def __init__(self, in_dim: int, mlp_dim: int, dropout: float):
-        super().__init__()
+        super().__init__(in_dim, [mlp_dim, in_dim], activation_layer=nn.GELU, inplace=None, dropout=dropout)
 
-        # Use the same layer names as in the pre-trained weights
-        self.linear_1 = nn.Linear(in_dim, mlp_dim)
-        self.activation = nn.GELU()
-        self.dropout = nn.Dropout(dropout)
-        self.linear_2 = nn.Linear(mlp_dim, in_dim)
-        self.dropout2 = nn.Dropout(dropout)
-
-        # Initialize weights
-        nn.init.xavier_uniform_(self.linear_1.weight)
-        nn.init.normal_(self.linear_1.bias, std=1e-6)
-        nn.init.xavier_uniform_(self.linear_2.weight)
-        nn.init.normal_(self.linear_2.bias, std=1e-6)
-
-    def forward(self, x):
-        x = self.linear_1(x)
-        x = self.activation(x)
-        x = self.dropout(x)
-        x = self.linear_2(x)
-        x = self.dropout2(x)
-        return x
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.normal_(m.bias, std=1e-6)
 
     def _load_from_state_dict(
         self,
@@ -83,6 +68,7 @@ class MLPBlock(nn.Module):
             unexpected_keys,
             error_msgs,
         )
+
 
 class EncoderBlock(nn.Module):
     """Transformer encoder block."""
@@ -139,18 +125,17 @@ class Encoder(nn.Module):
         # we have batch_first=True in nn.MultiheadAttention() by default
         self.pos_embedding = nn.Parameter(torch.empty(1, seq_length, hidden_dim).normal_(std=0.02))  # from BERT
         self.dropout = nn.Dropout(dropout)
-
-        # Use a list to store layers to maintain numerical indices
-        self.layers = nn.ModuleList([
-            EncoderBlock(
+        layers = OrderedDict()
+        for i in range(num_layers):
+            layers[f"encoder_layer_{i}"] = EncoderBlock(
                 num_heads,
                 hidden_dim,
                 mlp_dim,
                 dropout,
                 attention_dropout,
                 norm_layer,
-            ) for _ in range(num_layers)
-        ])
+            )
+        self.layers = nn.Sequential(layers)
         self.ln = norm_layer(hidden_dim)
 
     def forward(self, input: torch.Tensor, prompts=None):
@@ -161,7 +146,7 @@ class Encoder(nn.Module):
         x = input + self.pos_embedding[:, :seq_length, :]
 
         x = self.dropout(x)
-        for i, layer in enumerate(self.layers):
+        for i, (name, layer) in enumerate(self.layers.named_children()):
             if prompts is not None:
                 # prompts shape: (batch_size, num_layers, prompt_len, hidden_dim)
                 prompt = prompts[:, i]  # Shape: (batch_size, prompt_len, hidden_dim)
