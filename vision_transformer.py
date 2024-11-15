@@ -33,6 +33,13 @@ class VPTDeepViT(nn.Module):
     def forward(self, x: torch.Tensor):
         return self.vit_backbone(x, prompts=self.prompts)
 
+class ConvStemConfig(NamedTuple):
+    out_channels: int
+    kernel_size: int
+    stride: int
+    norm_layer: Callable[..., nn.Module] = nn.BatchNorm2d
+    activation_layer: Callable[..., nn.Module] = nn.ReLU
+
 class EncoderBlock(nn.Module):
     """Transformer encoder block with support for VPT-Deep prompts."""
 
