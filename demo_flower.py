@@ -1,16 +1,14 @@
-
 import torch
 from absl import app, flags
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
-from finetune import ViTLinear, inference, Trainer
+from finetune import ViTPrompt, inference, Trainer
 import yaml
 
 from datasets import get_flower102
 
-
 FLAGS = flags.FLAGS
-flags.DEFINE_string('exp_name', 'vit_linear',
+flags.DEFINE_string('exp_name', 'vit_prompt',
                     'The experiment with corresponding hyperparameters to run. See config.yaml')
 flags.DEFINE_string('output_dir', 'run1', 'Output Directory')
 flags.DEFINE_string('encoder', 'vit_b_32',
@@ -20,9 +18,9 @@ flags.DEFINE_string('data_dir', './flower-dataset-reduced', 'Directory with coco
 def get_config(exp_name, encoder):
     dir_name = f'{FLAGS.output_dir}/runs-{encoder}-flower102/demo-{exp_name}'
 
-    # add/modify hyperparameters of your class in config.yaml
+    # Add/modify hyperparameters of your class in config.yaml
     encoder_registry = {
-        'ViTLinear': ViTLinear,
+        'ViTPrompt': ViTPrompt,
     }
     with open("config.yaml", "r") as f:
         config = yaml.safe_load(f)[exp_name]
@@ -37,7 +35,6 @@ def get_config(exp_name, encoder):
     batch_size = config['batch_size']
 
     return net_class, dir_name, (optimizer, lr, wd, momentum), (scheduler, epochs), batch_size
-
 
 def main(_):
     torch.set_num_threads(2)
@@ -64,8 +61,7 @@ def main(_):
 
     writer = SummaryWriter(f'{dir_name}/lr{lr:0.6f}_wd{wd:0.6f}', flush_secs=10)
 
-    # we suggest creating a class called VITPrompt and putting your logic there.
-    # Then just initialize your model from that class.
+    # Initialize your model from the ViTPrompt class.
     model = net_class(102, FLAGS.encoder)
     model.to(device)
 
@@ -82,7 +78,6 @@ def main(_):
     test_dataloader = DataLoader(test_data, batch_size=batch_size, shuffle=False)
     model.load_state_dict(torch.load(f'{dir_name}/best_model.pth'))
     inference(test_dataloader, model, device, result_path=dir_name + '/test_predictions.txt')
-
 
 if __name__ == '__main__':
     app.run(main)
