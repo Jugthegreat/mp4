@@ -11,6 +11,24 @@ def get_encoder(name):
         model = vit_b_32(weights=ViT_B_32_Weights.IMAGENET1K_V1)
     return model
 
+class ViTLinear(nn.Module):
+    def __init__(self, n_classes, encoder_name):
+        super(ViTLinear, self).__init__()
+        
+        self.vit_b = get_encoder(encoder_name)
+        
+        # Reinitialize the head with an identity layer
+        self.vit_b.heads = nn.Identity()
+        
+        # Classification head
+        self.linear = nn.Linear(768, n_classes)
+    
+    def forward(self, x):
+        with torch.no_grad():
+            out = self.vit_b(x)
+        y = self.linear(out)
+        return y
+
 class VITPrompt(nn.Module):
     def __init__(self, n_classes, encoder_name, num_prompts=10):
         super(VITPrompt, self).__init__()
@@ -43,8 +61,6 @@ class VITPrompt(nn.Module):
         out = self.vit_b(x, self.deep_prompts)
         y = self.linear(out)
         return y
-
-# Existing ViTLinear class remains unchanged
 
 def test(test_loader, model, device):
     model.eval()
@@ -92,7 +108,7 @@ class Trainer():
         
         self.model.to(self.device)
 
-        # Only train parameters that require gradients (prompts and classifier head)
+        # Only train parameters that require gradients
         trainable_params = filter(lambda p: p.requires_grad, self.model.parameters())
 
         if optimizer == 'sgd':
@@ -122,7 +138,7 @@ class Trainer():
     
     def val_epoch(self):
         self.model.eval()
-        total_loss, correct, n = 0., 0., 0
+        total_loss, correct, n = 0., 0., 0.
 
         for x, y in self.val_loader:
             x, y = x.to(self.device), y.to(self.device)
