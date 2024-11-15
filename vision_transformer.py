@@ -2,6 +2,7 @@ import math
 from collections import OrderedDict
 from functools import partial
 from typing import Any, Callable, Dict, List, Optional, TypeVar
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, TypeVar
 
 import torch
 import torch.nn as nn
