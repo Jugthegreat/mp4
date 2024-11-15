@@ -1,4 +1,3 @@
-# Code adapted from PyTorch Vision Transformer implementation
 import math
 from collections import OrderedDict
 from functools import partial
@@ -85,7 +84,7 @@ class EncoderBlock(nn.Module):
         mlp_dim: int,
         dropout: float,
         attention_dropout: float,
-        norm_layer: Callable[..., nn.Module] = partial(nn.LayerNorm, eps=1e-6),
+        norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
     ):
         super().__init__()
         self.num_heads = num_heads
@@ -125,11 +124,12 @@ class Encoder(nn.Module):
         mlp_dim: int,
         dropout: float,
         attention_dropout: float,
-        norm_layer: Callable[..., nn.Module] = partial(nn.LayerNorm, eps=1e-6),
+        norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
     ):
         super().__init__()
         self.num_layers = num_layers
         self.hidden_dim = hidden_dim
+        self.seq_length = seq_length
 
         # Positional embedding
         self.pos_embedding = nn.Parameter(torch.empty(1, seq_length, hidden_dim).normal_(std=0.02))
@@ -154,16 +154,22 @@ class Encoder(nn.Module):
         x = input + self.pos_embedding  # Shape: (batch_size, seq_len, hidden_dim)
 
         batch_size = x.size(0)
+        seq_len = x.size(1)  # Original sequence length (including class token)
+
         if deep_prompts is not None:
             # deep_prompts shape: (1, num_layers, prompt_len, hidden_dim)
             deep_prompts = deep_prompts.expand(batch_size, -1, -1, -1)  # Expand to match batch size
 
         for layer_idx, layer in enumerate(self.layers):
             if deep_prompts is not None:
+                # Remove previous prompts before adding new ones
+                x = x[:, :seq_len, :]  # Keep only original tokens (excluding previous prompts)
+
                 # Get prompts for the current layer
                 layer_prompts = deep_prompts[:, layer_idx, :, :]  # Shape: (batch_size, prompt_len, hidden_dim)
                 # Concatenate prompts to the sequence
                 x = torch.cat([x, layer_prompts], dim=1)  # New sequence length: seq_len + prompt_len
+
             x = self.dropout(x)
             x = layer(x)
         x = self.ln(x)
@@ -185,7 +191,7 @@ class VisionTransformer(nn.Module):
         attention_dropout: float = 0.0,
         num_classes: int = 1000,
         representation_size: Optional[int] = None,
-        norm_layer: Callable[..., nn.Module] = partial(nn.LayerNorm, eps=1e-6),
+        norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
         conv_stem_configs: Optional[List[ConvStemConfig]] = None,
     ):
         super().__init__()
