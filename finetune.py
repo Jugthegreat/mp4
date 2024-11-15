@@ -3,6 +3,7 @@ from torch import nn
 import torch
 from vision_transformer import vit_b_32, ViT_B_32_Weights
 from tqdm import tqdm
+import math
 
 def get_encoder(name):
     if name == 'vit_b_32':
@@ -10,40 +11,44 @@ def get_encoder(name):
         model = vit_b_32(weights=ViT_B_32_Weights.IMAGENET1K_V1)
     return model
 
-class ViTPrompt(nn.Module):
-    def __init__(self, n_classes, encoder_name, prompt_len=10):
-        super(ViTPrompt, self).__init__()
+class VITPrompt(nn.Module):
+    def __init__(self, n_classes, encoder_name, num_prompts=10):
+        super(VITPrompt, self).__init__()
         
-        self.vit_b = [get_encoder(encoder_name)]
+        self.vit_b = get_encoder(encoder_name)
         
-        # Freeze the ViT backbone
-        for param in self.vit_b[0].parameters():
+        # Reinitialize the head with an identity layer
+        self.vit_b.heads = nn.Identity()
+        
+        # Freeze ViT backbone parameters
+        for param in self.vit_b.parameters():
             param.requires_grad = False
         
-        # Replace the classifier head
-        self.vit_b[0].heads.head = nn.Linear(768, n_classes)
+        hidden_dim = self.vit_b.hidden_dim  # Should be 768
+        num_layers = len(self.vit_b.encoder.layers)
+        self.num_layers = num_layers
+        self.num_prompts = num_prompts
         
-        # Set the number of prompts
-        self.prompt_len = prompt_len
-        self.num_layers = len(self.vit_b[0].encoder.layers)
-        self.hidden_dim = 768  # ViT hidden dimension
+        # Initialize prompts
+        prompt_dim = hidden_dim
+        v = math.sqrt(6. / float(hidden_dim + prompt_dim))
+        self.deep_prompts = nn.Parameter(
+            torch.zeros(1, num_layers, num_prompts, hidden_dim).uniform_(-v, v)
+        )
         
-        # Initialize the prompts
-        v = np.sqrt(6. / float(self.hidden_dim + self.hidden_dim))
-        self.prompts = nn.Parameter(torch.FloatTensor(1, self.num_layers, self.prompt_len, self.hidden_dim).uniform_(-v, v))
-    
-    def to(self, device):
-        super(ViTPrompt, self).to(device)
-        self.vit_b[0] = self.vit_b[0].to(device)
+        # Classification head
+        self.linear = nn.Linear(hidden_dim, n_classes)
     
     def forward(self, x):
-        # Pass prompts to the ViT encoder
-        out = self.vit_b[0](x, prompts=self.prompts)
-        return out
+        out = self.vit_b(x, self.deep_prompts)
+        y = self.linear(out)
+        return y
+
+# Existing ViTLinear class remains unchanged
 
 def test(test_loader, model, device):
     model.eval()
-    total_loss, correct, n = 0., 0., 0
+    total_loss, correct, n = 0., 0., 0.
 
     for x, y in tqdm(test_loader):
         x, y = x.to(device), y.to(device)
@@ -87,9 +92,13 @@ class Trainer():
         
         self.model.to(self.device)
 
+        # Only train parameters that require gradients (prompts and classifier head)
+        trainable_params = filter(lambda p: p.requires_grad, self.model.parameters())
+
         if optimizer == 'sgd':
-            trainable_params = filter(lambda p: p.requires_grad, self.model.parameters())
-            self.optimizer = torch.optim.SGD(trainable_params, lr=lr, weight_decay=wd, momentum=momentum)
+            self.optimizer = torch.optim.SGD(trainable_params, 
+                                             lr=lr, weight_decay=wd,
+                                             momentum=momentum)
             
         if scheduler == 'multi_step':
             self.lr_schedule = torch.optim.lr_scheduler.MultiStepLR(
@@ -99,7 +108,7 @@ class Trainer():
         self.model.train()
         total_loss, correct, n = 0., 0., 0
         
-        for x, y in tqdm(self.train_loader):
+        for x, y in self.train_loader:
             x, y = x.to(self.device), y.to(self.device)
             y_hat = self.model(x)
             loss = nn.CrossEntropyLoss()(y_hat, y)
@@ -115,14 +124,13 @@ class Trainer():
         self.model.eval()
         total_loss, correct, n = 0., 0., 0
 
-        with torch.no_grad():
-            for x, y in tqdm(self.val_loader):
-                x, y = x.to(self.device), y.to(self.device)
-                y_hat = self.model(x)
-                correct += (y_hat.argmax(dim=1) == y).float().mean().item()
-                loss = nn.CrossEntropyLoss()(y_hat, y)
-                total_loss += loss.item()
-                n += 1
+        for x, y in self.val_loader:
+            x, y = x.to(self.device), y.to(self.device)
+            y_hat = self.model(x)
+            correct += (y_hat.argmax(dim=1) == y).float().mean().item()
+            loss = nn.CrossEntropyLoss()(y_hat, y)
+            total_loss += loss.item()
+            n += 1
         accuracy = correct / n
         loss = total_loss / n
         return loss, accuracy
@@ -138,7 +146,7 @@ class Trainer():
             self.writer.add_scalar('val_loss', val_loss, epoch)
             self.writer.add_scalar('train_acc', train_acc, epoch)
             self.writer.add_scalar('train_loss', train_loss, epoch)
-            pbar.set_description("Epoch {}: val acc: {:.4f}, train acc: {:.4f}".format(epoch, val_acc, train_acc), refresh=True)
+            pbar.set_description("val acc: {:.4f}, train acc: {:.4f}".format(val_acc, train_acc), refresh=True)
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
                 best_epoch = epoch
