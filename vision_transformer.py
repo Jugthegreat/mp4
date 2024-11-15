@@ -242,6 +242,31 @@ class VisionTransformer(nn.Module):
         x = x.permute(0, 2, 1)
         return x
 
+    def vit_b_32(*, weights: Optional[ViT_B_32_Weights] = None, progress: bool = True, **kwargs: Any) -> VisionTransformer:
+    """
+    Constructs a vit_b_32 architecture from
+    `An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale <https://arxiv.org/abs/2010.11929>`_.
+
+    Args:
+        weights (:class:`~torchvision.models.ViT_B_32_Weights`, optional): The pretrained
+            weights to use. See :class:`~torchvision.models.ViT_B_32_Weights`
+            below for more details and possible values. By default, no pre-trained weights are used.
+        progress (bool, optional): If True, displays a progress bar of the download to stderr. Default is True.
+        **kwargs: parameters passed to the ``torchvision.models.vision_transformer.VisionTransformer``
+            base class.
+    """
+    weights = ViT_B_32_Weights.verify(weights)
+    return _vision_transformer(
+        patch_size=32,
+        num_layers=12,
+        num_heads=12,
+        hidden_dim=768,
+        mlp_dim=3072,
+        weights=weights,
+        progress=progress,
+        **kwargs,
+    )
+
     def forward(self, x: torch.Tensor, prompts: Optional[torch.Tensor] = None):
         x = self._process_input(x)
         n = x.shape[0]
@@ -253,3 +278,4 @@ class VisionTransformer(nn.Module):
         x = x[:, 0]
         x = self.heads(x)
         return x
+  
